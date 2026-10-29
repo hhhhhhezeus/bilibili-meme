@@ -65,9 +65,11 @@
 
 ---
 
+> 兼容性提示：manifest 的版本范围是目标范围，不代表整个范围均已在真实 MaiBot 主程序中验证。请在目标环境完成联调。
+
 ## 📦 安装
 
-### 方式 A：插件市场（推荐）
+### 方式 A：插件市场（审核通过后）
 
 MaiBot WebUI → 插件管理 → 搜索 **B站学梗** → 安装 → 启用。
 
@@ -124,8 +126,8 @@ B站 把**字幕**和**评论区 AI 总结**都锁在登录后面。未登录时
 
 ```bash
 # 宿主机上（需要 python3 + qrcode）
-pip install qrcode --break-system-packages
-python3 tools/bili_login.py
+pip install "qrcode[pil]"
+python3 tools/bili_login.py --config /实际路径/config.toml
 # → 生成二维码图片，扫码 + 手机确认后自动抓 SESSDATA 并写进 plugin config.toml
 ```
 
@@ -133,7 +135,7 @@ python3 tools/bili_login.py
 
 1. 调 B站 官方 `passport-login/web/qrcode/generate` 生成二维码
 2. 轮询 `qrcode/poll`，你扫码 + 手机确认后拿到 `SESSDATA`
-3. 自动写入插件配置
+3. 写入指定的本地配置文件；容器部署时请指定映射到宿主机的配置路径
 
 ### 安全提示
 
@@ -251,7 +253,7 @@ score = 0.6·ln(弹幕数) + 0.25·ln(播放量)
 检查 `write_to_db` 是否为 `true`，以及回复里是否写了"已写入黑话库"。
 
 **Q：字幕一直是"需登录 cookie"**
-`sessdata` 没配或已过期。重跑 `tools/bili_login.py` 扫一次码。
+`sessdata` 没配或已过期。重跑 `python3 tools/bili_login.py --config /实际路径/config.toml` 扫一次码。
 
 **Q：会不会把奇怪的梗学进库**
 有三道关：`taboo strong` 拒收、`min_confidence` 门槛、敏感度原因会记录在回复里。另外 `write_to_db=false` 可以先只用预览模式观察。
@@ -280,3 +282,7 @@ print('字幕', len(r['lines']), 'need_login', r['need_login'])
 ## 📄 许可证
 
 MIT
+
+## 本次审核修复
+
+修改内容、可复现测试和未完成的真实 Host 验证见 [审核修复记录](REVIEW_FIXES.md)。

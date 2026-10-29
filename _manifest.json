@@ -15,14 +15,14 @@
     "documentation": "https://github.com/hhhhhhezeus/bilibili-meme/blob/main/README.md",
     "issues": "https://github.com/hhhhhhezeus/bilibili-meme/issues"
   },
-  "plugin_type": "plugin",
+  "plugin_type": "integration",
   "host_application": {
     "min_version": "1.3.0",
-    "max_version": "1.9.99"
+    "max_version": "1.3.99"
   },
   "sdk": {
     "min_version": "2.19.0",
-    "max_version": "2.30.99"
+    "max_version": "2.20.99"
   },
   "dependencies": [],
   "capabilities": [

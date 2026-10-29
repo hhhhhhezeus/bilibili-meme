@@ -12,3 +12,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# 登录二维码
+bili_login_qr.png

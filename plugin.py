@@ -222,7 +222,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         )
         payload = await self.ctx.call_capability(
             "llm.generate",
-            {"prompt": prompt, "task_name": cfg.plugin.llm_task, "max_tokens": 1200, "temperature": 0.3},
+            **{"prompt": prompt, "task_name": cfg.plugin.llm_task, "max_tokens": 1200, "temperature": 0.3},
         )
         if not (payload or {}).get("success"):
             return f"❌ 模型抽取失败：{(payload or {}).get('error') or '未知错误'}"
@@ -298,7 +298,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         if name:
             res = await self.ctx.call_capability(
                 "database.query",
-                {
+                **{
                     "model_name": "Jargon",
                     "query_type": "get",
                     "filters": {"content": name},
@@ -317,7 +317,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
             return "\n".join(lines)
 
         res = await self.ctx.call_capability(
-            "database.query", {"model_name": "Jargon", "query_type": "get", "limit": 200}
+            "database.query", **{"model_name": "Jargon", "query_type": "get", "limit": 200}
         )
         rows = self._rows_of(res)
         mine = [r for r in rows if str(r.get("evidence_messages") or "").find('"bilibili"') >= 0]
@@ -359,7 +359,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         try:
             res = await self.ctx.call_capability(
                 "database.query",
-                {
+                **{
                     "model_name": "Jargon",
                     "query_type": "get",
                     "filters": {"content": record["content"]},
@@ -371,7 +371,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 old_id = rows[0].get("id")
                 await self.ctx.call_capability(
                     "database.query",
-                    {
+                    **{
                         "model_name": "Jargon",
                         "query_type": "update",
                         "filters": {"id": old_id},
@@ -380,7 +380,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 )
                 return "（库里已有同名梗，已更新释义）"
             await self.ctx.call_capability(
-                "database.query", {"model_name": "Jargon", "query_type": "create", "data": record}
+                "database.query", **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
             return "（已写入黑话库，下次聊天命中会自然用上）"
         except Exception as exc:  # noqa: BLE001
@@ -390,6 +390,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
     @staticmethod
     def _rows_of(res: Any) -> list[dict[str, Any]]:
         """兼容能力层的各种返回形态。"""
+        if isinstance(res, list):
+            return [r for r in res if isinstance(r, dict)]
         if not isinstance(res, dict):
             return []
         for key in ("data", "result", "rows", "items"):
@@ -489,7 +491,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         )
         payload = await self.ctx.call_capability(
             "llm.generate",
-            {"prompt": prompt, "task_name": conf.llm_task, "max_tokens": 1200, "temperature": 0.3},
+            **{"prompt": prompt, "task_name": conf.llm_task, "max_tokens": 1200, "temperature": 0.3},
         )
         if not (payload or {}).get("success"):
             return f"❌ 模型总结失败：{(payload or {}).get('error') or '未知错误'}"
@@ -558,13 +560,13 @@ class BilibiliMemePlugin(MaiBotPlugin):
         try:
             res = await self.ctx.call_capability(
                 "send.text",
-                {"text": text, "stream_id": stream_id, "sync_to_maisaka_history": False},
+                **{"text": text, "stream_id": stream_id, "sync_to_maisaka_history": False},
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("send.text 异常: %s", exc)
             return True, text, False
-        if isinstance(res, dict) and res.get("success") is False:
-            logger.warning("send.text 失败: %s", res.get("error"))
+        if res is False or (isinstance(res, dict) and res.get("success") is False):
+            logger.warning("send.text 失败: %s", res.get("error") if isinstance(res, dict) else res)
             return True, text, False
         return True, text, True
 
