@@ -1,0 +1,22 @@
+# B站学梗插件配置示例
+# 用法：复制为 config.toml 后修改（config.toml 已加入 .gitignore）
+# 也可以在 MaiBot WebUI 的插件配置里直接改
+# B站学梗插件配置
+[plugin]
+config_version = "1.0.0"   # 配置结构版本，不要手改
+
+enabled = true               # 总开关
+write_to_db = true           # 学习结果写入麦麦黑话库（false = 只预览）
+reject_taboo_strong = true   # 拒绝高敏感梗（地域黑/地狱笑话等）入库
+
+max_candidates = 5           # 同名多视频时最多比较几个候选
+comment_pages = 2            # 每个视频抓几页热门评论（每页20条）
+danmaku_segments = 2         # 抓几个弹幕分片（每片约6分钟）
+rate_limit_seconds = 1.2     # B站请求间隔，太小会被风控
+
+# B站 SESSDATA（建议小号）。有它才能拿字幕；留空则视频理解只能靠弹幕/评论
+# 获取：浏览器登录B站 -> F12 -> Application -> Cookies -> SESSDATA
+sessdata = ""  # 留空则拿不到字幕；用 tools/bili_login.py 扫码获取
+
+llm_task = "utils"           # 用哪个模型任务做抽取
+min_confidence = 0.35        # 低于该置信度不入库
