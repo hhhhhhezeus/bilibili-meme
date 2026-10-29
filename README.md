@@ -103,7 +103,7 @@ git clone https://github.com/hhhhhhezeus/bilibili-meme.git
 | `comment_pages` | `2` | 每视频抓几页热评（每页 20 条） |
 | `danmaku_segments` | `2` | 最少抓几个弹幕分片（长视频会自动增加） |
 | `rate_limit_seconds` | `1.2` | B站 请求间隔，太小会被风控 |
-| `llm_task` | `utils` | 用哪个模型任务抽取（`utils` / `learner`） |
+| `llm_task` | `utils` | 必须填写你的 MaiBot 模型配置中实际存在的任务名；`utils` 只是默认示例 |
 | `min_confidence` | `0.35` | 低于此置信度不入库 |
 
 ---
@@ -289,3 +289,5 @@ MIT
 
 重新学习同名梗只更新本插件创建记录的释义与来源，保留使用次数和作用范围；遇到手工或其他来源的同名黑话时保留原记录，并在回复中说明未覆盖。数据库明确返回失败时不会提示写入成功。
 审核修复发行版本：`v1.0.1`。请从 Releases 下载此版本；`v1.0.0` 不包含本轮修复。
+
+**配置与使用边界：**非空环境变量 `BILI_SESSDATA` 优先于 `config.toml` 的 `sessdata`，修改配置不生效时请检查环境变量。当前 `/学梗` 没有权限限制或命令冷却，任何能调用命令的群成员都可能产生 B站请求；请只在可信群启用，并留意账号风控。写入的新梗是全局黑话，会影响所有会话；来源字段中的 message_id 是 B站 BV 号，不是聊天消息 ID。

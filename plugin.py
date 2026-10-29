@@ -240,6 +240,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
 
         if not content:
             return "❌ 模型没给出梗名，这次没学成。"
+        if len(content) > 255:
+            return "❌ 模型给出的梗名超过 255 字，未写入黑话库。"
         if cfg.plugin.reject_taboo_strong and level == "strong":
             return (
                 f"🚫 「{content}」被判定为高敏感梗，拒绝入库。\n"
@@ -357,8 +359,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
     async def _upsert_jargon(self, record: dict[str, Any]) -> str:
         """同名梗做更新，避免库里堆重复。"""
         try:
-            res = await self.ctx.call_capability(
-                "database.query",
+            res = await self._database_query(
                 **{
                     "model_name": "Jargon",
                     "query_type": "get",
@@ -375,8 +376,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 old_id = rows[0].get("id")
                 if old_id is None:
                     raise ValueError("已有记录缺少 ID，未执行更新")
-                result = await self.ctx.call_capability(
-                    "database.query",
+                result = await self._database_query(
                     **{
                         "model_name": "Jargon",
                         "query_type": "update",
@@ -388,8 +388,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 if result == 0:
                     raise ValueError("数据库未更新任何记录")
                 return "（库里已有同名梗，已更新释义并保留使用统计）"
-            result = await self.ctx.call_capability(
-                "database.query", **{"model_name": "Jargon", "query_type": "create", "data": record}
+            result = await self._database_query( **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
             self._check_db_result(result)
             return "（已写入黑话库，下次聊天命中会自然用上）"
@@ -397,10 +396,22 @@ class BilibiliMemePlugin(MaiBotPlugin):
             logger.exception("写库失败")
             return f"（⚠️ 写库失败：{type(exc).__name__}: {exc}）"
 
+    async def _database_query(self, **args):
+        # SDK 2.19/2.20 may unwrap `result` even on failure. Inspect the raw
+        # cap.call response before unwrapping so failures cannot look successful.
+        result = await self.ctx.call_host_method(
+            "cap.call", payload={"capability": "database.query", "args": args}
+        )
+        self._check_db_result(result)
+        if isinstance(result, dict) and "success" in result and "result" in result:
+            return result["result"]
+        return result
+
     @staticmethod
     def _check_db_result(result):
         if result is False or (isinstance(result, dict) and result.get("success") is False):
-            raise ValueError("数据库操作失败，请检查宿主日志")
+            detail = str(result.get("error") or "请检查宿主日志")[:160] if isinstance(result, dict) else "请检查宿主日志"
+            raise ValueError(f"数据库操作失败：{detail}")
 
     @staticmethod
     def _rows_of(res: Any) -> list[dict[str, Any]]:

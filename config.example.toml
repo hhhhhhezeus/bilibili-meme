@@ -14,9 +14,10 @@ comment_pages = 2            # 每个视频抓几页热门评论（每页20条�
 danmaku_segments = 2         # 抓几个弹幕分片（每片约6分钟）
 rate_limit_seconds = 1.2     # B站请求间隔，太小会被风控
 
+# 非空 BILI_SESSDATA 环境变量优先于此配置项。
 # B站 SESSDATA（建议小号）。有它才能拿字幕；留空则视频理解只能靠弹幕/评论
 # 获取：浏览器登录B站 -> F12 -> Application -> Cookies -> SESSDATA
 sessdata = ""  # 留空则拿不到字幕；用 tools/bili_login.py 扫码获取
 
-llm_task = "utils"           # 用哪个模型任务做抽取
+llm_task = "utils"           # 填写 MaiBot 模型配置中实际存在的任务名
 min_confidence = 0.35        # 低于该置信度不入库

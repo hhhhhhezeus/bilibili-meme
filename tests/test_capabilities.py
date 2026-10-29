@@ -96,11 +96,24 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('已写入', result)
             self.assertNotIn('已更新', result)
 
+    async def test_create_and_update_failure_are_reported(self):
+        for existing in (False, True):
+            async def rpc(method, plugin_id, payload, **kwargs):
+                if payload['args']['query_type'] == 'get':
+                    rows = [{'id': 7, 'created_by': 'AI', 'evidence_messages': '"bilibili"'}] if existing else []
+                    return {'success': True, 'result': rows}
+                return {'success': False, 'error': 'write denied', 'result': None}
+            self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+            result = await self.plugin._upsert_jargon({'content': 'test', 'meaning': 'x', 'evidence_messages': '"bilibili"'})
+            self.assertIn('write denied', result)
+            self.assertNotIn('已写入', result)
+            self.assertNotIn('已更新', result)
+
     def test_all_capability_calls_use_one_positional_argument(self):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == 'call_capability']
-        self.assertEqual(len(calls), 8)
+        self.assertEqual(len(calls), 5)
         self.assertTrue(all(len(call.args) == 1 for call in calls))
 
 if __name__ == '__main__':
