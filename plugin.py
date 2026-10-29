@@ -366,26 +366,41 @@ class BilibiliMemePlugin(MaiBotPlugin):
                     "limit": 1,
                 },
             )
+            self._check_db_result(res)
             rows = self._rows_of(res)
             if rows:
+                existing = rows[0]
+                if existing.get("created_by") != "AI" or '"bilibili"' not in str(existing.get("evidence_messages", "")):
+                    return "（⚠️ 存在非本插件创建的同名黑话，已保留原记录，未覆盖）"
                 old_id = rows[0].get("id")
-                await self.ctx.call_capability(
+                if old_id is None:
+                    raise ValueError("已有记录缺少 ID，未执行更新")
+                result = await self.ctx.call_capability(
                     "database.query",
                     **{
                         "model_name": "Jargon",
                         "query_type": "update",
                         "filters": {"id": old_id},
-                        "data": dict(record),
+                        "data": {key: record[key] for key in ("meaning", "evidence_messages")},
                     },
                 )
-                return "（库里已有同名梗，已更新释义）"
-            await self.ctx.call_capability(
+                self._check_db_result(result)
+                if result == 0:
+                    raise ValueError("数据库未更新任何记录")
+                return "（库里已有同名梗，已更新释义并保留使用统计）"
+            result = await self.ctx.call_capability(
                 "database.query", **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
+            self._check_db_result(result)
             return "（已写入黑话库，下次聊天命中会自然用上）"
         except Exception as exc:  # noqa: BLE001
             logger.exception("写库失败")
             return f"（⚠️ 写库失败：{type(exc).__name__}: {exc}）"
+
+    @staticmethod
+    def _check_db_result(result):
+        if result is False or (isinstance(result, dict) and result.get("success") is False):
+            raise ValueError("数据库操作失败，请检查宿主日志")
 
     @staticmethod
     def _rows_of(res: Any) -> list[dict[str, Any]]:

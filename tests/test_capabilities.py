@@ -60,7 +60,7 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
                     'is_meme': True, 'content': '测试梗', 'confidence': 0.9,
                     'meaning': '测试解释', 'one_line': '测试总结', 'reliability': 0.9})}
             if args['query_type'] == 'get':
-                return {'success': True, 'result': [{'id': 42}] if existing else []}
+                return {'success': True, 'result': [{'id': 42, 'created_by': 'AI', 'evidence_messages': '"bilibili"', 'count': 8}] if existing else []}
             return {'success': True, 'result': 1}
         self.plugin._set_context(PluginContext('test', rpc_call=rpc))
         client = MagicMock()
@@ -81,6 +81,20 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         queries = [c['args'] for c in calls if c['capability'] == 'database.query']
         self.assertEqual([q['query_type'] for q in queries], ['get', 'create', 'get', 'update'])
         self.assertEqual(queries[-1]['filters'], {'id': 42})
+        self.assertEqual(set(queries[-1]['data']), {'meaning', 'evidence_messages'})
+
+    async def test_manual_jargon_and_failed_query_are_not_overwritten(self):
+        for response in ({'success': True, 'result': [{'id': 7, 'created_by': 'USER'}]},
+                         {'success': False, 'error': 'database unavailable'}):
+            calls = []
+            async def rpc(method, plugin_id, payload, **kwargs):
+                calls.append(payload)
+                return response
+            self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+            result = await self.plugin._upsert_jargon({'content': 'test'})
+            self.assertEqual(len(calls), 1)
+            self.assertNotIn('已写入', result)
+            self.assertNotIn('已更新', result)
 
     def test_all_capability_calls_use_one_positional_argument(self):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
