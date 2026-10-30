@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 from maibot_sdk import Command, Field, MaiBotPlugin, PluginConfigBase, Tool
@@ -62,6 +63,8 @@ class BilibiliMemePluginSection(PluginConfigBase):
         default="",
         description="B站 SESSDATA（建议用小号）。有它才能拿字幕；留空则视频理解只能靠弹幕/评论。",
     )
+    command_cooldown_seconds: int = Field(default=30, ge=0, le=3600, description="每位用户的重任务冷却秒数；0 为关闭")
+    max_concurrent_requests: int = Field(default=2, ge=1, le=8, description="插件全局重任务并发上限")
     llm_task: str = Field(default="utils", description="用哪个模型任务做抽取（utils/learner 都行）。")
     min_confidence: float = Field(default=0.35, description="低于该置信度的梗不入库。")
 
@@ -82,6 +85,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
     # ---------------- 生命周期 ----------------
 
     async def on_load(self) -> None:
+        self._active_requests = 0
+        self._cooldowns = {}
         logger.info("B站学梗插件已加载")
 
     async def on_unload(self) -> None:
@@ -92,6 +97,30 @@ class BilibiliMemePlugin(MaiBotPlugin):
     ) -> None:
         """配置热重载：配置对象由基类自动刷新，这里只记日志。"""
         logger.info("B站学梗配置已更新: scope=%s version=%s", scope, version)
+
+    async def _run_request(self, operation, context, progress=""):
+        cfg = self.config.plugin
+        now = time.monotonic()
+        cooldowns = getattr(self, "_cooldowns", {})
+        self._cooldowns = {key: expiry for key, expiry in cooldowns.items() if expiry > now}
+        # Missing user identity shares a stream bucket; tool calls without context
+        # share the anonymous bucket. Global concurrency always applies.
+        key = (str(context.get("platform") or ""), str(context.get("user_id") or context.get("stream_id") or "anonymous"))
+        remaining = self._cooldowns.get(key, 0) - now
+        if remaining > 0:
+            return f"⏳ 请求冷却中，请在 {int(remaining) + 1} 秒后重试。"
+        active = getattr(self, "_active_requests", 0)
+        if active >= cfg.max_concurrent_requests or len(self._cooldowns) >= 4096:
+            return "⏳ 当前任务较多，请稍后重试。"
+        self._active_requests = active + 1
+        if cfg.command_cooldown_seconds:
+            self._cooldowns[key] = now + cfg.command_cooldown_seconds
+        try:
+            if progress:
+                await self._finish(context, progress)
+            return await operation()
+        finally:
+            self._active_requests -= 1
 
     # ---------------- 命令 ----------------
 
@@ -106,9 +135,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
         if not raw:
             return await self._finish(kwargs, "用法：/学梗 大肥鱼   或   /学梗 BV11kn86mEjg")
 
-        await self._finish(kwargs, f"🔍 正在学「{raw}」…（要抓 B站 数据 + 本地模型整理，稍等十几秒）")
         try:
-            text = await asyncio.wait_for(self._learn(raw, cfg), timeout=180)
+            text = await asyncio.wait_for(self._run_request(lambda: self._learn(raw, cfg), kwargs, f"🔍 正在学「{raw}」…"), timeout=180)
         except asyncio.TimeoutError:
             text = "❌ 超时了（180 秒）。可能是 B站 接口慢或模型排队，稍后再试。"
         except BiliError as exc:
@@ -448,9 +476,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
         raw = self._arg(kwargs, "term", fallback=term)
         if not raw:
             return await self._finish(kwargs, "用法：/总结视频 BV号   或   /总结视频 https://b23.tv/xxxx")
-        await self._finish(kwargs, f"📺 正在看「{raw[:40]}」…（要下载字幕/弹幕 + 本地模型总结）")
         try:
-            text = await asyncio.wait_for(self._summarize(raw, cfg.plugin), timeout=240)
+            text = await asyncio.wait_for(self._run_request(lambda: self._summarize(raw, cfg.plugin), kwargs, f"📺 正在看「{raw[:40]}」…"), timeout=240)
         except asyncio.TimeoutError:
             text = "❌ 超时了（240 秒）。视频太长或接口慢，稍后再试。"
         except BiliError as exc:
@@ -483,7 +510,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         if not target:
             return "缺少 url 参数"
         try:
-            return await asyncio.wait_for(self._summarize(target, cfg.plugin), timeout=240)
+            return await asyncio.wait_for(self._run_request(lambda: self._summarize(target, cfg.plugin), kwargs), timeout=240)
         except asyncio.TimeoutError:
             return "总结超时（240 秒）"
         except Exception as exc:  # noqa: BLE001

@@ -1,4 +1,5 @@
 import ast
+import asyncio
 import json
 from unittest.mock import patch, MagicMock
 import importlib.util
@@ -127,6 +128,28 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         components = {x['name']: x for x in self.plugin.get_components()}
         for name, expected in [('学梗', 200000), ('总结视频', 260000), ('bili_video_summary', 260000)]:
             self.assertEqual(components[name]['metadata']['timeout_ms'], expected)
+
+    async def test_request_limits_and_cancellation_release(self):
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'max_concurrent_requests': 1, 'command_cooldown_seconds': 30}})
+        entered, release = asyncio.Event(), asyncio.Event()
+        async def work():
+            entered.set()
+            await release.wait()
+            return 'done'
+        job = asyncio.create_task(self.plugin._run_request(work, {'user_id': 'a'}))
+        await entered.wait()
+        self.assertIn('冷却', await self.plugin._run_request(work, {'user_id': 'a'}))
+        self.assertIn('任务较多', await self.plugin._run_request(work, {'user_id': 'b'}))
+        job.cancel()
+        await asyncio.gather(job, return_exceptions=True)
+        self.assertEqual(self.plugin._active_requests, 0)
+        release.set()
+        self.assertEqual(await self.plugin._run_request(work, {'user_id': 'b'}), 'done')
+        async def failure():
+            raise RuntimeError('test')
+        with self.assertRaises(RuntimeError):
+            await self.plugin._run_request(failure, {'user_id': 'c'})
+        self.assertEqual(self.plugin._active_requests, 0)
 
     def test_all_capability_calls_use_one_positional_argument(self):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
