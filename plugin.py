@@ -411,13 +411,15 @@ class BilibiliMemePlugin(MaiBotPlugin):
                     },
                 )
                 self._check_db_result(result)
+                if result is None:
+                    return "（⚠️ 数据库未确认更新成功，请检查宿主日志和黑话库）"
                 if result == 0:
                     raise ValueError("数据库未更新任何记录")
                 return "（库里已有同名梗，已更新释义并保留使用统计）"
             result = await self._database_query( **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
             self._check_db_result(result)
-            if result is None or result is False:
+            if result is None or result == 0:
                 return "（⚠️ 数据库未确认写入成功，请检查宿主日志和黑话库）"
             return "（已写入黑话库，下次聊天命中会自然用上）"
         except Exception as exc:  # noqa: BLE001

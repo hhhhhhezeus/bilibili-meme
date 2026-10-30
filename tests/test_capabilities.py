@@ -124,6 +124,21 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         with self.assertRaisesRegex(ValueError, 'offline'):
             await self.plugin._library('test', BilibiliMemeConfig())
 
+    async def test_empty_write_results_never_claim_success(self):
+        for existing in (False, True):
+            for result in (None, 0, False):
+                with self.subTest(existing=existing, result=result):
+                    async def rpc(method, plugin_id, payload, **kwargs):
+                        if payload['args']['query_type'] == 'get':
+                            rows = [{'id': 7, 'created_by': 'AI', 'evidence_messages': '"bilibili"'}] if existing else []
+                            return {'success': True, 'result': rows}
+                        return {'success': True, 'result': result}
+                    self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+                    text = await self.plugin._upsert_jargon({'content': 'test', 'meaning': 'test', 'evidence_messages': '"bilibili"'})
+                    self.assertNotIn('已写入', text)
+                    self.assertNotIn('已更新', text)
+                    self.assertIn('⚠️', text)
+
     def test_component_timeouts(self):
         components = {x['name']: x for x in self.plugin.get_components()}
         for name, expected in [('学梗', 200000), ('总结视频', 260000), ('bili_video_summary', 260000)]:
