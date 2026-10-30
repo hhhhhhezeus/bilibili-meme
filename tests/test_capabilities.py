@@ -170,7 +170,7 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == 'call_capability']
-        self.assertEqual(len(calls), 3)
+        self.assertEqual(len(calls), 4)
         self.assertTrue(all(len(call.args) == 1 for call in calls))
 
 if __name__ == '__main__':
