@@ -177,6 +177,35 @@ class BiliClient:
             )
         return items
 
+    def recent_uploads(self, author_uid: int, *, since: int, max_pages: int = 5) -> list[dict[str, Any]]:
+        """Fetch a bounded newest-first UP archive; fail on incomplete pagination."""
+        if isinstance(author_uid, bool) or not isinstance(author_uid, int) or author_uid <= 0:
+            raise ValueError("UP 主 UID 必须为正整数")
+        if not 1 <= max_pages <= 20:
+            raise ValueError("页数上限无效")
+        result = []
+        for page in range(1, max_pages + 1):
+            data = self._wbi_get("/x/space/wbi/arc/search", {
+                "mid": author_uid, "pn": page, "ps": 30, "order": "pubdate",
+            })
+            body = data.get("data")
+            if not isinstance(body, dict) or not isinstance(body.get("list"), dict):
+                raise BiliError("UP 主投稿列表响应结构异常")
+            videos = body['list'].get('vlist')
+            if not isinstance(videos, list):
+                raise BiliError("UP 主投稿列表缺少视频数据")
+            for item in videos:
+                if not isinstance(item, dict):
+                    raise BiliError("UP 主投稿记录结构异常")
+                stamp = item.get('created')
+                if isinstance(stamp, bool) or not isinstance(stamp, int):
+                    raise BiliError("投稿时间缺失，无法判断是否已完整扫描")
+                result.append({'bvid': item.get('bvid'), 'title': item.get('title'),
+                               'author_uid': author_uid, 'published_at': stamp})
+            if len(videos) < 30 or (videos and min(v['created'] for v in videos) < since):
+                return result
+        raise BiliError("投稿超过分页上限，未确认完整性；请缩短时间范围或提高上限")
+
     def video_info(self, bvid: str) -> dict[str, Any]:
         """视频元信息（aid/cid/标题/简介/时长/UP主）。"""
         data = self._get_json("https://api.bilibili.com/x/web-interface/view?" + urllib.parse.urlencode({"bvid": bvid}))
