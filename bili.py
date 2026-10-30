@@ -197,12 +197,14 @@ class BiliClient:
             for item in videos:
                 if not isinstance(item, dict):
                     raise BiliError("UP 主投稿记录结构异常")
+                if item.get('mid') is not None and str(item['mid']) != str(author_uid):
+                    raise BiliError("投稿作者 UID 与请求不一致")
                 stamp = item.get('created')
                 if isinstance(stamp, bool) or not isinstance(stamp, int):
                     raise BiliError("投稿时间缺失，无法判断是否已完整扫描")
                 result.append({'bvid': item.get('bvid'), 'title': item.get('title'),
                                'author_uid': author_uid, 'published_at': stamp})
-            if len(videos) < 30 or (videos and min(v['created'] for v in videos) < since):
+            if len(videos) < 30 or (videos and all(v['created'] < since for v in videos)):
                 return result
         raise BiliError("投稿超过分页上限，未确认完整性；请缩短时间范围或提高上限")
 

@@ -24,3 +24,6 @@ min_confidence = 0.35        # 低于该置信度不入库
 
 command_cooldown_seconds = 30 # 每位用户重任务冷却秒数
 max_concurrent_requests = 2 # 当前插件进程的重任务并发上限
+
+weekly_enabled = false # 周一自动学习，完成联调后手动开启
+weekly_hour = 9 # 北京时间周一开始的小时，0–23
