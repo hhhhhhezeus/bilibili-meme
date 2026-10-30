@@ -1,7 +1,7 @@
 {
   "manifest_version": 2,
   "id": "github.hhhhhhezeus.bilibili-meme",
-  "version": "1.0.2",
+  "version": "1.1.0",
   "name": "B站学梗 / Bilibili Meme Learner",
   "description": "从 B站 视频里学梗，并理解群友分享的视频：读字幕、看弹幕爆发点、翻热评，用本地模型整理成结构化梗卡写入麦麦黑话库；含敏感度判定、选源打分与自动降级。",
   "author": {
