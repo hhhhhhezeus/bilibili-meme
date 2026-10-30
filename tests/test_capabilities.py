@@ -109,11 +109,30 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
             self.assertNotIn('已写入', result)
             self.assertNotIn('已更新', result)
 
+    async def test_none_create_and_library_failure(self):
+        async def rpc(method, plugin_id, payload, **kwargs):
+            if payload['args']['query_type'] == 'get':
+                return {'success': True, 'result': []}
+            return {'success': True, 'result': None}
+        self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+        result = await self.plugin._upsert_jargon({'content': 'test'})
+        self.assertIn('未确认', result)
+        async def failed(method, plugin_id, payload, **kwargs):
+            return {'success': False, 'result': None, 'error': 'offline'}
+        self.plugin._set_context(PluginContext('test', rpc_call=failed))
+        with self.assertRaisesRegex(ValueError, 'offline'):
+            await self.plugin._library('test', BilibiliMemeConfig())
+
+    def test_component_timeouts(self):
+        components = {x['name']: x for x in self.plugin.get_components()}
+        for name, expected in [('学梗', 200000), ('总结视频', 260000), ('bili_video_summary', 260000)]:
+            self.assertEqual(components[name]['metadata']['timeout_ms'], expected)
+
     def test_all_capability_calls_use_one_positional_argument(self):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == 'call_capability']
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 3)
         self.assertTrue(all(len(call.args) == 1 for call in calls))
 
 if __name__ == '__main__':

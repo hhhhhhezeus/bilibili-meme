@@ -179,7 +179,7 @@ class BiliClient:
 
     def video_info(self, bvid: str) -> dict[str, Any]:
         """视频元信息（aid/cid/标题/简介/时长/UP主）。"""
-        data = self._get_json(f"https://api.bilibili.com/x/web-interface/view?bvid={bvid}")
+        data = self._get_json("https://api.bilibili.com/x/web-interface/view?" + urllib.parse.urlencode({"bvid": bvid}))
         v = data["data"]
         pages = v.get("pages") or []
         return {
@@ -345,6 +345,30 @@ class BiliClient:
         found = _BV_RE.search(final or "")
         return found.group(1) if found else ""
 
+    def _subtitle_json(self, url: str) -> dict[str, Any]:
+        parsed = urllib.parse.urlsplit(url)
+        host = (parsed.hostname or "").lower()
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise BiliError("字幕地址端口无效") from exc
+        if (parsed.scheme != "https" or not (host == "hdslb.com" or host.endswith(".hdslb.com"))
+                or parsed.username is not None or parsed.password is not None or port not in (None, 443)):
+            raise BiliError("字幕地址不在允许的 HTTPS 域名范围内")
+        class NoRedirect(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                raise BiliError("字幕地址不允许重定向")
+        self._throttle()
+        try:
+            req = urllib.request.Request(url, headers=dict(UA))
+            with urllib.request.build_opener(NoRedirect()).open(req, timeout=self.timeout) as response:
+                payload = json.load(response)
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise BiliError("字幕下载失败或格式无效") from exc
+        if not isinstance(payload, dict):
+            raise BiliError("字幕响应结构异常")
+        return payload
+
     def subtitle(self, bvid: str, cid: int) -> dict[str, Any]:
         """取字幕。返回 {ok, need_login, lang, lines:[(from_s, text)]}。
 
@@ -379,7 +403,7 @@ class BiliClient:
         if not url:
             return {"ok": False, "need_login": need_login, "lang": "", "lines": []}
         try:
-            payload = self._raw_json(url)
+            payload = self._subtitle_json(url)
         except BiliError as exc:
             logger.debug("字幕正文下载失败: %s", exc)
             return {"ok": False, "need_login": need_login, "lang": "", "lines": []}

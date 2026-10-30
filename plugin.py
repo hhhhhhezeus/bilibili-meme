@@ -95,7 +95,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
 
     # ---------------- 命令 ----------------
 
-    @Command("学梗", description="从B站视频学习一个梗", pattern=r"^/学梗\s*(?P<term>.*)$")
+    @Command("学梗", description="从B站视频学习一个梗", pattern=r"^/学梗\s*(?P<term>.*)$", timeout_ms=200000)
     async def handle_learn(self, term: str = "", **kwargs: Any) -> Any:
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
@@ -298,8 +298,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
 
     async def _library(self, name: str, cfg: BilibiliMemeConfig) -> str:
         if name:
-            res = await self.ctx.call_capability(
-                "database.query",
+            res = await self._database_query(
                 **{
                     "model_name": "Jargon",
                     "query_type": "get",
@@ -318,8 +317,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 )
             return "\n".join(lines)
 
-        res = await self.ctx.call_capability(
-            "database.query", **{"model_name": "Jargon", "query_type": "get", "limit": 200}
+        res = await self._database_query( **{"model_name": "Jargon", "query_type": "get", "limit": 200}
         )
         rows = self._rows_of(res)
         mine = [r for r in rows if str(r.get("evidence_messages") or "").find('"bilibili"') >= 0]
@@ -391,6 +389,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
             result = await self._database_query( **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
             self._check_db_result(result)
+            if result is None or result is False:
+                return "（⚠️ 数据库未确认写入成功，请检查宿主日志和黑话库）"
             return "（已写入黑话库，下次聊天命中会自然用上）"
         except Exception as exc:  # noqa: BLE001
             logger.exception("写库失败")
@@ -440,7 +440,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 return val.strip()
         return ""
 
-    @Command("总结视频", description="总结一个B站视频讲了什么", pattern=r"^/总结视频\s*(?P<term>.*)$")
+    @Command("总结视频", description="总结一个B站视频讲了什么", pattern=r"^/总结视频\s*(?P<term>.*)$", timeout_ms=260000)
     async def handle_summary(self, term: str = "", **kwargs: Any) -> Any:
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
@@ -462,6 +462,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
 
     @Tool(
         "bili_video_summary",
+        timeout_ms=260000,
         description="读取并总结一个 B站 视频的内容。群友分享了 B站 链接、BV号或 b23.tv 短链时可以调用。",
         parameters={
             "type": "object",
