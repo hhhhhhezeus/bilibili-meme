@@ -1,7 +1,7 @@
 import ast
 import asyncio
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 import importlib.util
 import pathlib
 import sys
@@ -165,8 +165,8 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_group_whitelist_limits_commands(self):
         self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '611706126\n963151135'}})
-        self.assertIsNone(await self.plugin._access_refusal({'group_id': '611706126', 'user_id': '999'}))
-        self.assertIn('白名单', await self.plugin._access_refusal({'group_id': '123456', 'user_id': '999'}))
+        self.assertIsNone(self.plugin._access_refusal({'group_id': '611706126', 'user_id': '999'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '123456', 'user_id': '999'}))
         self.calls.clear()
         await self.plugin.handle_library(**{'term': '', 'group_id': '123456', 'user_id': '999', 'stream_id': 'group'})
         self.assertEqual([call[1]['capability'] for call in self.calls], ['send.text'])
@@ -181,41 +181,25 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_users': 'qq:111, 222\n\n333'}})
         self.assertEqual(_id_set('qq:111, 222\n\n333'), {'111', '222', '333'})
         self.assertEqual(_id_set(r'111\n222'), {'111', '222'})
-        self.assertIsNone(await self.plugin._access_refusal({'user_id': '222'}))
-        self.assertIn('白名单', await self.plugin._access_refusal({'user_id': '999'}))
+        self.assertIsNone(self.plugin._access_refusal({'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'user_id': '999'}))
 
-    async def test_unknown_group_caller_falls_back_to_recent_message(self):
-        async def rpc(method, plugin_id, payload, **kwargs):
-            self.assertEqual(payload['capability'], 'message.get_recent')
-            self.assertEqual(payload['args']['chat_id'], 'stream-hash')
-            return {'success': True, 'messages': [
-                {'message_info': {'user_info': {'user_id': '111'}}},
-                {'message_info': {'user_info': {'user_id': '1325015637'}}},
-            ]}
-        self.plugin._set_context(PluginContext('test', rpc_call=rpc))
-        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_users': '1325015637'}})
-        # 群聊工具调用没有 user_id 时，按会话最近一条真人消息的发言人判定。
-        self.assertIsNone(await self.plugin._access_refusal({'stream_id': 'stream-hash', 'group_id': '963151135'}))
-        async def other_rpc(method, plugin_id, payload, **kwargs):
-            return {'success': True, 'messages': [{'message_info': {'user_info': {'user_id': '999'}}}]}
-        self.plugin._set_context(PluginContext('test', rpc_call=other_rpc))
-        self.assertIn('白名单', await self.plugin._access_refusal({'stream_id': 'stream-hash', 'group_id': '963151135'}))
-        async def empty_rpc(method, plugin_id, payload, **kwargs):
-            return {'success': True, 'messages': []}
-        self.plugin._set_context(PluginContext('test', rpc_call=empty_rpc))
-        self.assertIn('白名单', await self.plugin._access_refusal({'stream_id': 'stream-hash', 'group_id': '963151135'}))
-
-    async def test_group_and_member_whitelist_combine_and_tool_is_gated(self):
+    async def test_group_and_member_whitelist_combine_and_tool_is_not_gated(self):
         self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '1', 'allowed_users': '222'}})
-        self.assertIsNone(await self.plugin._access_refusal({'group_id': '1', 'user_id': '222'}))
-        self.assertIn('白名单', await self.plugin._access_refusal({'group_id': '1', 'user_id': '999'}))
-        self.assertIn('白名单', await self.plugin._access_refusal({'group_id': '2', 'user_id': '222'}))
-        self.assertIn('白名单', await self.plugin._access_refusal({'user_id': '222'}))
+        self.assertIsNone(self.plugin._access_refusal({'group_id': '1', 'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '1', 'user_id': '999'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '2', 'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'user_id': '222'}))
+        # 工具 bili_video_summary 不受白名单约束：群名单外的群也能调用。
         self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '1'}})
-        self.assertIn('白名单', await self.plugin.tool_video_summary(url='BV11kn86mEjg', group_id='2', user_id='222'))
+        self.plugin._summarize = AsyncMock(return_value='视频总结')
+        self.assertEqual(
+            await self.plugin.tool_video_summary(url='BV11kn86mEjg', group_id='2', user_id='222'),
+            '视频总结',
+        )
         self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0'}})
         self.assertIsNone(_id_set(''))
-        self.assertIsNone(await self.plugin._access_refusal({'user_id': '999'}))
+        self.assertIsNone(self.plugin._access_refusal({'user_id': '999'}))
 
     def test_component_timeouts(self):
         components = {x['name']: x for x in self.plugin.get_components()}
@@ -248,7 +232,7 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
         tree = ast.parse((ROOT / 'plugin.py').read_text())
         calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call)
                  and isinstance(n.func, ast.Attribute) and n.func.attr == 'call_capability']
-        self.assertEqual(len(calls), 5)
+        self.assertEqual(len(calls), 4)
         self.assertTrue(all(len(call.args) == 1 for call in calls))
 
 if __name__ == '__main__':
