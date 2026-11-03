@@ -250,7 +250,41 @@ class BilibiliMemePlugin(MaiBotPlugin):
         finally:
             self._active_requests -= 1
 
-    def _access_refusal(self, kwargs: dict[str, Any]) -> str | None:
+    async def _caller_user_id(self, kwargs: dict[str, Any]) -> str:
+        """取调用者 QQ 号；群聊工具调用拿不到发言人时，回查会话最近一条真人消息。"""
+        user_id = str(kwargs.get("user_id") or "").strip()
+        if user_id:
+            return user_id
+        stream_id = str(kwargs.get("stream_id") or kwargs.get("chat_id") or "").strip()
+        if not stream_id:
+            return ""
+        try:
+            payload = await self.ctx.call_capability(
+                "message.get_recent",
+                chat_id=stream_id,
+                hours=1.0,
+                limit=30,
+                filter_mai=True,
+            )
+        except Exception:  # noqa: BLE001 - 查不到发言人时按未命中处理，不阻断命令
+            logger.warning("回查会话发言人失败", exc_info=True)
+            return ""
+        # SDK 对 message.get_recent 会直接解包成 messages 列表，旧版本则返回整包结果。
+        messages = payload.get("messages") if isinstance(payload, dict) else payload
+        if not isinstance(messages, list):
+            return ""
+        for message in reversed(messages):
+            if not isinstance(message, dict):
+                continue
+            info = message.get("message_info")
+            user = info.get("user_info") if isinstance(info, dict) else None
+            candidate = str((user or {}).get("user_id") or "").strip()
+            if candidate:
+                logger.debug("白名单回查会话 %s 的发言人：%s", stream_id, candidate)
+                return candidate
+        return ""
+
+    async def _access_refusal(self, kwargs: dict[str, Any]) -> str | None:
         """群/成员白名单已配置且调用者不命中时返回拒绝文案；放行返回 None。"""
         allowed_groups = _id_set(self.config.plugin.allowed_groups)
         if allowed_groups is not None:
@@ -262,7 +296,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 )
         allowed_users = _id_set(self.config.plugin.allowed_users)
         if allowed_users is not None:
-            user_id = str(kwargs.get("user_id") or "").strip()
+            user_id = await self._caller_user_id(kwargs)
             if user_id not in allowed_users:
                 return (
                     "🚫 本插件指令仅限白名单成员使用。"
@@ -274,7 +308,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
 
     @Command("周梗状态", description="查看每周自动学习状态", pattern=r"^/周梗状态\s*$")
     async def weekly_status(self, **kwargs):
-        refusal = self._access_refusal(kwargs)
+        refusal = await self._access_refusal(kwargs)
         if refusal:
             return await self._finish(kwargs, refusal)
         cfg = self.config.plugin
@@ -300,7 +334,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
-        refusal = self._access_refusal(kwargs)
+        refusal = await self._access_refusal(kwargs)
         if refusal:
             return await self._finish(kwargs, refusal)
         logger.debug("学梗 kwargs keys=%s", sorted(kwargs.keys()))
@@ -325,7 +359,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
-        refusal = self._access_refusal(kwargs)
+        refusal = await self._access_refusal(kwargs)
         if refusal:
             return await self._finish(kwargs, refusal)
         name = self._arg(kwargs, "term", fallback=term)
@@ -661,7 +695,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
-        refusal = self._access_refusal(kwargs)
+        refusal = await self._access_refusal(kwargs)
         if refusal:
             return await self._finish(kwargs, refusal)
         raw = self._arg(kwargs, "term", fallback=term)
@@ -697,7 +731,7 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return "插件已禁用"
-        refusal = self._access_refusal(kwargs)
+        refusal = await self._access_refusal(kwargs)
         if refusal:
             return refusal
         target = url or str(kwargs.get("url") or "")
