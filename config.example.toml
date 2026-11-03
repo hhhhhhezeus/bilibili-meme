@@ -7,6 +7,7 @@ config_version = "1.0.0"   # 配置结构版本，不要手改
 
 enabled = true               # 总开关
 write_to_db = true           # 学习结果写入麦麦黑话库（false = 只预览）
+overwrite_existing = false    # 重学同名梗时覆盖非本插件创建的黑话（true = 也覆盖手工/其他来源记录）
 reject_taboo_strong = true   # 拒绝高敏感梗（地域黑/地狱笑话等）入库
 
 max_candidates = 5           # 同名多视频时最多比较几个候选
@@ -22,6 +23,14 @@ sessdata = ""  # 留空则拿不到字幕；用 tools/bili_login.py 扫码获取
 llm_task = "utils"           # 填写 MaiBot 模型配置中实际存在的任务名
 min_confidence = 0.35        # 低于该置信度不入库
 
+# 群白名单：只有这些群能用 /学梗、/梗库、/总结视频、/周梗状态 四条指令（bili_video_summary 工具不受限）
+# 每行一个群号，也可用逗号分隔；留空则所有群都可用
+# 组合效果：群空+QQ空=不限；群空+QQ非空=只限制人（名单内的人在任意群和私聊都能用）；
+#           群非空+QQ空=只限制群（群里任何人都能用，群外和私聊被拒）；两个都填=需同时命中
+allowed_groups = ""
+# 成员白名单：在群白名单基础上再按 QQ 号收紧；单独配置时只限制人，不限制群和私聊
+# 每行一个QQ号，也可用逗号分隔（支持 qq:123456 写法）；留空则不限制成员
+allowed_users = ""
 command_cooldown_seconds = 30 # 每位用户重任务冷却秒数
 max_concurrent_requests = 2 # 当前插件进程的重任务并发上限
 

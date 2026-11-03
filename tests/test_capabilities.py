@@ -1,7 +1,7 @@
 import ast
 import asyncio
 import json
-from unittest.mock import patch, MagicMock
+from unittest.mock import AsyncMock, patch, MagicMock
 import importlib.util
 import pathlib
 import sys
@@ -14,7 +14,7 @@ spec = importlib.util.spec_from_file_location('bilibili_meme', ROOT / '__init__.
 package = importlib.util.module_from_spec(spec)
 sys.modules[spec.name] = package
 spec.loader.exec_module(package)
-from bilibili_meme.plugin import BilibiliMemePlugin, BilibiliMemeConfig
+from bilibili_meme.plugin import BilibiliMemePlugin, BilibiliMemeConfig, _id_set
 
 class CapabilityTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self):
@@ -26,6 +26,7 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
             return {'success': True}
         self.plugin = BilibiliMemePlugin()
         self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0'}})
 
     async def test_database_and_send_reach_sdk_as_named_arguments(self):
         await self.plugin._library('test', BilibiliMemeConfig())
@@ -138,6 +139,67 @@ class CapabilityTests(unittest.IsolatedAsyncioTestCase):
                     self.assertNotIn('已写入', text)
                     self.assertNotIn('已更新', text)
                     self.assertIn('⚠️', text)
+
+    async def test_foreign_jargon_is_overwritten_when_enabled(self):
+        calls = []
+        async def rpc(method, plugin_id, payload, **kwargs):
+            calls.append(payload)
+            if payload['args']['query_type'] == 'get':
+                return {'success': True, 'result': [{'id': 9, 'created_by': 'MANUAL', 'evidence_messages': None}]}
+            return {'success': True, 'result': 1}
+        self.plugin._set_context(PluginContext('test', rpc_call=rpc))
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'overwrite_existing': True}})
+        text = await self.plugin._upsert_jargon(
+            {'content': '测试梗', 'meaning': '新释义', 'evidence_messages': '"bilibili"'}
+        )
+        self.assertIn('已更新', text)
+        self.assertIn('覆盖原记录', text)
+        queries = [c['args'] for c in calls if c['capability'] == 'database.query']
+        self.assertEqual([q['query_type'] for q in queries], ['get', 'update'])
+        self.assertEqual(queries[1]['filters'], {'id': 9})
+        self.assertEqual(queries[1]['data']['meaning'], '新释义')
+        self.assertEqual(
+            set(queries[1]['data']),
+            {'meaning', 'evidence_messages', 'is_global', 'is_jargon', 'is_complete'},
+        )
+
+    async def test_group_whitelist_limits_commands(self):
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '611706126\n963151135'}})
+        self.assertIsNone(self.plugin._access_refusal({'group_id': '611706126', 'user_id': '999'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '123456', 'user_id': '999'}))
+        self.calls.clear()
+        await self.plugin.handle_library(**{'term': '', 'group_id': '123456', 'user_id': '999', 'stream_id': 'group'})
+        self.assertEqual([call[1]['capability'] for call in self.calls], ['send.text'])
+        self.assertIn('白名单', self.calls[0][1]['args']['text'])
+        self.calls.clear()
+        await self.plugin.handle_library(**{'term': '', 'group_id': '611706126', 'user_id': '999', 'stream_id': 'group'})
+        capabilities = [call[1]['capability'] for call in self.calls]
+        self.assertEqual(capabilities[0], 'database.query')
+        self.assertEqual(capabilities[-1], 'send.text')
+
+    async def test_member_whitelist_and_parsing(self):
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_users': 'qq:111, 222\n\n333'}})
+        self.assertEqual(_id_set('qq:111, 222\n\n333'), {'111', '222', '333'})
+        self.assertEqual(_id_set(r'111\n222'), {'111', '222'})
+        self.assertIsNone(self.plugin._access_refusal({'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'user_id': '999'}))
+
+    async def test_group_and_member_whitelist_combine_and_tool_is_not_gated(self):
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '1', 'allowed_users': '222'}})
+        self.assertIsNone(self.plugin._access_refusal({'group_id': '1', 'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '1', 'user_id': '999'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'group_id': '2', 'user_id': '222'}))
+        self.assertIn('白名单', self.plugin._access_refusal({'user_id': '222'}))
+        # 工具 bili_video_summary 不受白名单约束：群名单外的群也能调用。
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0', 'allowed_groups': '1'}})
+        self.plugin._summarize = AsyncMock(return_value='视频总结')
+        self.assertEqual(
+            await self.plugin.tool_video_summary(url='BV11kn86mEjg', group_id='2', user_id='222'),
+            '视频总结',
+        )
+        self.plugin.set_plugin_config({'plugin': {'config_version': '1.0.0'}})
+        self.assertIsNone(_id_set(''))
+        self.assertIsNone(self.plugin._access_refusal({'user_id': '999'}))
 
     def test_component_timeouts(self):
         components = {x['name']: x for x in self.plugin.get_components()}

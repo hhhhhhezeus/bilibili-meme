@@ -35,6 +35,17 @@ from .extract import (
 
 logger = logging.getLogger("bilibili_meme")
 
+
+def _id_set(raw: str) -> set[str] | None:
+    """解析配置里的 ID 白名单：每行一个，也接受逗号/空格分隔；空串返回 None 表示不限制。"""
+    # 兼容直接从 config.toml 复制过来的字面量 "\n"，以及被塞进单行输入框时粘成一行的情况
+    text = str(raw or "").replace("\\n", "\n")
+    tokens = re.split(r"[\s,，;；]+", text)
+    ids = {token.removeprefix("qq:").strip() for token in tokens if token.strip()}
+    ids.discard("")
+    return ids or None
+
+
 class BilibiliMemePluginSection(PluginConfigBase):
     """[plugin] 段：插件配置（WebUI 可改）。"""
 
@@ -53,9 +64,15 @@ class BilibiliMemePluginSection(PluginConfigBase):
         description="学习结果是否写入麦麦的黑话库。关闭则只回复预览，不污染库。",
         json_schema_extra={"x-widget": "switch"},
     )
+    overwrite_existing: bool = Field(
+        default=False,
+        description="重学同名梗时，是否覆盖并非本插件创建的同名黑话（含手工记录和麦麦自己学的）。"
+        "开启后直接改写该记录的释义与来源，并设为全局黑话；关闭时保留原记录、只回复提示。",
+        json_schema_extra={"x-widget": "switch"},
+    )
     reject_taboo_strong: bool = Field(
         default=True,
-        description="拒绝入库敏感度 strong 的梗（地域黑/地狱笑话等），只回复提示。",
+        description="只回复提示。",
         json_schema_extra={"x-widget": "switch"},
     )
     max_candidates: int = Field(default=5, description="同名词搜到多个视频时，最多比较几个候选。")
@@ -65,6 +82,18 @@ class BilibiliMemePluginSection(PluginConfigBase):
     sessdata: str = Field(
         default="",
         description="B站 SESSDATA（建议用小号）。有它才能拿字幕；留空则视频理解只能靠弹幕/评论。",
+    )
+    allowed_groups: str = Field(
+        default="",
+        description="群白名单：只有这些群里的成员能使用本插件指令（/学梗、/梗库、/总结视频、/周梗状态）和 bili_video_summary 工具，"
+        "每行一个群号，也接受逗号分隔；留空则所有群都可用（私聊同样受此限制）。",
+        json_schema_extra={"x-widget": "textarea", "rows": 4, "placeholder": "每行一个群号"},
+    )
+    allowed_users: str = Field(
+        default="",
+        description="成员白名单：只有这些 QQ 号能使用本插件指令和 bili_video_summary 工具，每行一个 QQ 号，"
+        "也接受逗号分隔；留空则不限制成员（单独配置时只限制人，不限制群和私聊；与群白名单同时配置时需两者都命中）。",
+        json_schema_extra={"x-widget": "textarea", "rows": 4, "placeholder": "每行一个QQ号"},
     )
     command_cooldown_seconds: int = Field(default=30, ge=0, le=3600, description="每位用户的重任务冷却秒数；0 为关闭")
     max_concurrent_requests: int = Field(default=2, ge=1, le=8, description="插件全局重任务并发上限")
@@ -221,10 +250,33 @@ class BilibiliMemePlugin(MaiBotPlugin):
         finally:
             self._active_requests -= 1
 
+    def _access_refusal(self, kwargs: dict[str, Any]) -> str | None:
+        """群/成员白名单已配置且调用者不命中时返回拒绝文案；放行返回 None。"""
+        allowed_groups = _id_set(self.config.plugin.allowed_groups)
+        if allowed_groups is not None:
+            group_id = str(kwargs.get("group_id") or "").strip()
+            if group_id not in allowed_groups:
+                return (
+                    "🚫 本插件指令仅限白名单群使用。"
+                    "请管理员在插件配置的「群白名单」（allowed_groups）里添加本群群号。"
+                )
+        allowed_users = _id_set(self.config.plugin.allowed_users)
+        if allowed_users is not None:
+            user_id = str(kwargs.get("user_id") or "").strip()
+            if user_id not in allowed_users:
+                return (
+                    "🚫 本插件指令仅限白名单成员使用。"
+                    "请管理员在插件配置的「成员白名单」（allowed_users）里添加你的 QQ 号。"
+                )
+        return None
+
     # ---------------- 命令 ----------------
 
     @Command("周梗状态", description="查看每周自动学习状态", pattern=r"^/周梗状态\s*$")
     async def weekly_status(self, **kwargs):
+        refusal = self._access_refusal(kwargs)
+        if refusal:
+            return await self._finish(kwargs, refusal)
         cfg = self.config.plugin
         if not cfg.weekly_enabled:
             return await self._finish(kwargs, "📅 每周自动学习未启用；在插件配置中开启 weekly_enabled。")
@@ -248,6 +300,9 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
+        refusal = self._access_refusal(kwargs)
+        if refusal:
+            return await self._finish(kwargs, refusal)
         logger.debug("学梗 kwargs keys=%s", sorted(kwargs.keys()))
 
         raw = self._arg(kwargs, "term", fallback=term)
@@ -270,6 +325,9 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
+        refusal = self._access_refusal(kwargs)
+        if refusal:
+            return await self._finish(kwargs, refusal)
         name = self._arg(kwargs, "term", fallback=term)
         try:
             text = await self._library(name, cfg)
@@ -516,17 +574,24 @@ class BilibiliMemePlugin(MaiBotPlugin):
             rows = self._rows_of(res)
             if rows:
                 existing = rows[0]
-                if existing.get("created_by") != "AI" or '"bilibili"' not in str(existing.get("evidence_messages", "")):
+                owned = existing.get("created_by") == "AI" and '"bilibili"' in str(
+                    existing.get("evidence_messages", "")
+                )
+                if not owned and not self.config.plugin.overwrite_existing:
                     return "（⚠️ 存在非本插件创建的同名黑话，已保留原记录，未覆盖）"
-                old_id = rows[0].get("id")
+                old_id = existing.get("id")
                 if old_id is None:
                     raise ValueError("已有记录缺少 ID，未执行更新")
+                data = {key: record[key] for key in ("meaning", "evidence_messages")}
+                if not owned:
+                    # 覆盖他人记录时补上全局标记，否则新释义可能只在原会话生效
+                    data.update({"is_global": True, "is_jargon": True, "is_complete": True})
                 result = await self._database_query(
                     **{
                         "model_name": "Jargon",
                         "query_type": "update",
                         "filters": {"id": old_id},
-                        "data": {key: record[key] for key in ("meaning", "evidence_messages")},
+                        "data": data,
                     },
                 )
                 self._check_db_result(result)
@@ -534,6 +599,8 @@ class BilibiliMemePlugin(MaiBotPlugin):
                     return "（⚠️ 数据库未确认更新成功，请检查宿主日志和黑话库）"
                 if result == 0:
                     raise ValueError("数据库未更新任何记录")
+                if not owned:
+                    return "（库里已有同名黑话，已更新释义并覆盖原记录，已设为全局）"
                 return "（库里已有同名梗，已更新释义并保留使用统计）"
             result = await self._database_query( **{"model_name": "Jargon", "query_type": "create", "data": record}
             )
@@ -594,6 +661,9 @@ class BilibiliMemePlugin(MaiBotPlugin):
         cfg: BilibiliMemeConfig = self.config  # type: ignore[assignment]
         if not cfg.plugin.enabled:
             return None
+        refusal = self._access_refusal(kwargs)
+        if refusal:
+            return await self._finish(kwargs, refusal)
         raw = self._arg(kwargs, "term", fallback=term)
         if not raw:
             return await self._finish(kwargs, "用法：/总结视频 BV号   或   /总结视频 https://b23.tv/xxxx")
