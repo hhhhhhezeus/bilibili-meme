@@ -23,12 +23,48 @@ _NEGATIVE = ("瞎讲", "不对", "错的", "胡说", "误导", "扯淡", "编的
 _JUNK_DANMAKU = ("哈哈哈", "233", "666", "前方高能", "第一", "打卡", "来了", "好听", "笑死", "绷不住", "泪目")
 
 
-def score_candidate(cand: dict[str, Any], comments: list[dict[str, Any]]) -> float:
+def _norm(text: str) -> str:
+    """归一化：去掉空白与标点、英文转小写，用于比较查询词和候选视频是否对口。"""
+    return re.sub(r"[\s\W_]+", "", str(text or "")).lower()
+
+
+# 搜索词里常见的“梗”后缀，判断相关性时剥掉再比核心词
+_CORE_SUFFIX = re.compile(r"(是什么梗|什么梗|梗指南|梗科普)$")
+
+
+def is_relevant(cand: dict[str, Any], term: str) -> bool:
+    """候选视频是否真的在讲用户要学的那个词。
+
+    B站模糊搜索对长句、生僻词也会返回一堆高热视频（甚至讲座合集），
+    所以先按标题/简介/标签做一次硬过滤，再进打分环节。
+    词太短（<2 字，如 "ch" 以外的单字）无法判断时放行，交给模型。
+    """
+    key = _norm(term)
+    if len(key) < 2:
+        return True
+    hay = _norm(
+        " ".join(
+            [
+                str(cand.get("title") or ""),
+                str(cand.get("desc") or ""),
+                " ".join(str(t) for t in (cand.get("tags") or [])),
+            ]
+        )
+    )
+    core = _CORE_SUFFIX.sub("", key)
+    return key in hay or (len(core) >= 2 and core in hay)
+
+
+def score_candidate(cand: dict[str, Any], comments: list[dict[str, Any]], term: str = "") -> float:
     """给候选视频打分，用于「同一梗多个视频」时选源。
 
     参考：弹幕量（热度）、评论元信号（讲得清不清楚）、标题形态（是不是梗指南）、播放量。
+    term 非空时先做相关性判断：对不上的候选直接记 -inf，后续会被剔除。
     """
     import math
+
+    if term and not is_relevant(cand, term):
+        return float("-inf")
 
     score = 0.0
     score += math.log1p(max(0, cand.get("danmaku", 0))) * 0.6
@@ -149,15 +185,18 @@ UP主：{video.get('owner', '')} ｜ 时长：{video.get('duration', 0)}秒 ｜ 
      "level": "none|mild|strong",
      "reason": "若 mild/strong，说明为什么（如地域歧视、地狱笑话、人身攻击、涉政）"
   }},
+  "matches_query": true/false,   // 视频讲的梗是否就是「待确认的梗」本身（同义/别名也算）
   "confidence": 0.0-1.0            // 你对这个整理结果的把握
 }}
 
 判定规则：
 1. examples 必须是上面材料里出现过的原句，不要自己编。
 2. 如果材料不足以说清"含义"或"用法"，把 confidence 压到 0.4 以下。
-3. taboo 判定要保守：涉及地域、民族、性别、身体缺陷、灾难、逝者的玩笑，一律不写 none。
-5. origin 只能来自字幕内容；没有字幕时必须留空串，绝不允许凭猜测编造来历。
+3. origin 只能来自字幕内容；没有字幕时必须留空串，绝不允许凭猜测编造来历。
 4. 不要把这个视频里的 UP 主名字当成梗。
+5. 只有当视频讲的梗就是「待确认的梗」本身（同义、简称、别名都算对得上）时，matches_query 才为 true；
+   视频讲的是另一个梗、或根本不是梗，一律 false。
+6. matches_query 为 false 时，is_meme 也必须为 false，不要把这个视频里的梗写进 content。
 """
 
 

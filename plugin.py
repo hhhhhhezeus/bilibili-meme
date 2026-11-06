@@ -281,10 +281,16 @@ class BilibiliMemePlugin(MaiBotPlugin):
     # ---------------- 核心流程 ----------------
 
     async def _learn(self, raw: str, cfg: BilibiliMemeConfig) -> str:
+        # 0) 已经学过的词直接回缓存，避免重复搜索、重复调模型、重复刷同一条记录
+        m = _BV_RE.search(raw)
+        if not m:
+            cached = await self._cached_learned(raw)
+            if cached:
+                return cached
+
         client = BiliClient(rate_limit=cfg.plugin.rate_limit_seconds, sessdata=self._sessdata(cfg.plugin))
 
         # 1) 定位视频
-        m = _BV_RE.search(raw)
         if m:
             bvid = m.group(1)
             video = await asyncio.to_thread(client.video_info, bvid)
@@ -328,7 +334,19 @@ class BilibiliMemePlugin(MaiBotPlugin):
                 continue
             cand["view"] = info["view"]
             cand["danmaku"] = cand.get("danmaku") or info["danmaku_total"]
-            scored.append((score_candidate(cand, cs), cand, cs, info))
+            cand["desc"] = info.get("desc", "")
+            scored.append((score_candidate(cand, cs, term_hint), cand, cs, info))
+
+        # 2.5) 相关性硬过滤：标题/简介/标签都对不上查询词的候选直接淘汰
+        dropped = [c.get("bvid") for s, c, _, _ in scored if s == float("-inf")]
+        scored = [item for item in scored if item[0] != float("-inf")]
+        if dropped:
+            logger.info("剔除 %d 个不对口的候选: %s", len(dropped), ", ".join(str(b) for b in dropped[:8]))
+        if not scored:
+            return (
+                f"❌ 搜到的视频都是热度高的无关内容，没有真正讲「{raw[:24]}」的。\n"
+                f"换个说法，或直接给 BV 号。"
+            )
 
         # 只对前 3 名探测字幕，避免请求过多
         scored.sort(key=lambda x: x[0], reverse=True)
@@ -378,6 +396,11 @@ class BilibiliMemePlugin(MaiBotPlugin):
             return "❌ 模型输出不是合法 JSON，这次没学成（可重试一次）。"
         if not data.get("is_meme"):
             return f"❌ 判断这不是一个可用的梗（或视频讲的是别的东西）。视频：{info['title'][:40]}"
+        if data.get("matches_query") is False:
+            return (
+                f"❌ 搜到的视频讲的是别的梗（{info['title'][:30]}），和「{term_hint[:20]}」对不上，没入库。\n"
+                f"换个说法，或直接给 BV 号。"
+            )
 
         # 5) 入库判定
         taboo = data.get("taboo") or {}
@@ -442,6 +465,36 @@ class BilibiliMemePlugin(MaiBotPlugin):
             lines.append(f"⚠️ 敏感度 {level}：{taboo.get('reason') or '未说明'}")
         lines.append(saved)
         return "\n".join(lines)
+
+    async def _cached_learned(self, term: str) -> str:
+        """库里已有本插件学过的同名梗时直接返回，省掉一次搜索+模型调用。
+
+        同名梗会被 _upsert_jargon 就地覆盖，反复学同一个词只会不断改写同一条记录，
+        在这里挡掉可以避免「同一个梗被反复学、反复刷屏」。
+        """
+        name = str(term or "").strip()
+        if not name:
+            return ""
+        try:
+            res = await self._database_query(
+                **{"model_name": "Jargon", "query_type": "get", "filters": {"content": name}, "limit": 1}
+            )
+            rows = self._rows_of(res)
+        except Exception:  # noqa: BLE001 - 查缓存失败就走正常学习流程
+            logger.exception("查已学缓存失败，继续正常学习")
+            return ""
+        if not rows:
+            return ""
+        row = rows[0]
+        if '"bilibili"' not in str(row.get("evidence_messages") or ""):
+            return ""
+        meaning = str(row.get("meaning") or "").strip()
+        if not meaning:
+            return ""
+        return (
+            f"📚 「{name}」已经学过了，直接给你：\n{meaning[:600]}\n"
+            f"（来源是之前那次学习。想重新学，用 /学梗 BV号 指定源视频）"
+        )
 
     async def _library(self, name: str, cfg: BilibiliMemeConfig) -> str:
         if name:
